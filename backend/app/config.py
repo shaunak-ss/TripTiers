@@ -33,10 +33,12 @@ TIMEOUT_CLAUDE_TIERING_S = 14.0
 TIMEOUT_CLAUDE_ITINERARY_S = 12.0
 TIMEOUT_CLAUDE_FACTS_S = 25.0
 TIMEOUT_CLAUDE_COLLAB_S = 16.0
+TIMEOUT_CLAUDE_CONCIERGE_S = 12.0
 
 CACHE_TTL_FLIGHTS = 20 * 60
 CACHE_TTL_FLIGHTS_DURABLE = 24 * 60 * 60
 CACHE_TTL_ITINERARY = 24 * 60 * 60
+CACHE_TTL_ITINERARY_PERSONALIZED = 15 * 60
 CACHE_TTL_DESTINATION = 6 * 60 * 60
 CACHE_TTL_LOCATION = 7 * 24 * 60 * 60
 CACHE_TTL_FX = 6 * 60 * 60
@@ -144,6 +146,10 @@ def cache_key_flights(origin: str, dest: str, start: str, end: str) -> str:
 
 def cache_key_itinerary(slug: str, tier: str, days: int) -> str:
     return f"itinerary:{slug}:{tier}:{days}"
+
+
+def cache_key_itinerary_personalized(slug: str, tier: str, days: int, preferences_hash: str) -> str:
+    return f"itinerary:personalized:{slug}:{tier}:{days}:{preferences_hash}"
 
 
 def cache_key_destination(slug: str) -> str:

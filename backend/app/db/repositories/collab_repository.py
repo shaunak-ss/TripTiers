@@ -18,6 +18,20 @@ def new_room_code() -> str:
     return "".join(secrets.choice(_ALPHABET) for _ in range(6))
 
 
+def _message_dict(row: dict) -> dict:
+    return {
+        "id": row["id"],
+        "roomId": row["room_id"],
+        "userId": str(row["user_id"]) if row.get("user_id") else None,
+        "displayName": row["display_name"],
+        "body": row["body"],
+        "isBot": bool(row.get("is_bot", False)),
+        "kind": row.get("kind") or "text",
+        "meta": row.get("meta") or {},
+        "createdAt": row.get("created_at") or _now(),
+    }
+
+
 def _assemble(room: dict, members: list[dict], messages: list[dict]) -> dict:
     return {
         "id": room["id"],
@@ -26,6 +40,8 @@ def _assemble(room: dict, members: list[dict], messages: list[dict]) -> dict:
         "tripId": room.get("trip_id"),
         "generatedTripId": room.get("generated_trip_id"),
         "hostUserId": str(room["host_user_id"]),
+        "tripBrief": room.get("trip_brief") or {},
+        "generatedTripBrief": room.get("generated_trip_brief") or {},
         "createdAt": room.get("created_at") or _now(),
         "members": [
             {
@@ -36,17 +52,7 @@ def _assemble(room: dict, members: list[dict], messages: list[dict]) -> dict:
             }
             for row in members
         ],
-        "messages": [
-            {
-                "id": row["id"],
-                "roomId": row["room_id"],
-                "userId": str(row["user_id"]),
-                "displayName": row["display_name"],
-                "body": row["body"],
-                "createdAt": row.get("created_at") or _now(),
-            }
-            for row in messages
-        ],
+        "messages": [_message_dict(row) for row in messages],
     }
 
 
@@ -155,20 +161,103 @@ def add_message(*, code: str, user_id: str, display_name: str, body: str) -> dic
             "user_id": user_id,
             "display_name": display_name,
             "body": body,
+            "kind": "text",
         }
     ).execute()
     if not inserted.data:
         raise RuntimeError("Failed to post message")
-    row = inserted.data[0]
-    return {
-        "id": row["id"],
-        "roomId": row["room_id"],
-        "userId": str(row["user_id"]),
-        "displayName": row["display_name"],
-        "body": row["body"],
-        "createdAt": row.get("created_at") or _now(),
+    return _message_dict(inserted.data[0])
+
+
+def add_bot_message(
+    *,
+    code: str,
+    display_name: str,
+    body: str,
+    kind: str = "text",
+    meta: dict | None = None,
+) -> dict | None:
+    room = get_room_by_code(code)
+    if room is None:
+        raise KeyError("room_not_found")
+    inserted = get_supabase().table("collab_messages").insert(
+        {
+            "room_id": room["id"],
+            "user_id": None,
+            "display_name": display_name,
+            "body": body,
+            "is_bot": True,
+            "kind": kind,
+            "meta": meta or {},
+        }
+    ).execute()
+    if not inserted.data:
+        return None
+    return _message_dict(inserted.data[0])
+
+
+def add_system_message(*, code: str, display_name: str, body: str) -> dict | None:
+    return add_bot_message(code=code, display_name=display_name, body=body, kind="system")
+
+
+def get_message(message_id: str) -> dict | None:
+    rows = get_supabase().table("collab_messages").select("*").eq("id", message_id).limit(1).execute()
+    if not rows.data:
+        return None
+    return _message_dict(rows.data[0])
+
+
+def set_message_resolved_meta(message_id: str, resolved: dict) -> None:
+    message = get_message(message_id)
+    if message is None:
+        return
+    meta = dict(message.get("meta") or {})
+    meta["resolved"] = resolved
+    get_supabase().table("collab_messages").update({"meta": meta}).eq("id", message_id).execute()
+
+
+def resolve_field(
+    *,
+    code: str,
+    field: str,
+    value: str,
+    option_label: str,
+    set_by_user_id: str | None,
+    set_by_name: str,
+    allow_overwrite: bool = False,
+) -> dict | None:
+    """First-write-wins update of one trip_brief field.
+
+    Returns the resolution that ended up in place (which may belong to someone else
+    if they beat this call), or None if the room doesn't exist. `allow_overwrite=True`
+    is for explicit chat-detected corrections to an already-set field, where the newest
+    call should win rather than the first.
+
+    Not perfectly atomic against a concurrent write between the read and this update —
+    acceptable for a small group trip-planning chat; a lost race here just means the
+    other member's pick silently wins, which matches "first response wins" either way.
+    """
+    room = get_room_by_code(code)
+    if room is None:
+        return None
+    brief: dict = dict(room.get("tripBrief") or {})
+    existing = brief.get(field)
+    if existing and not allow_overwrite:
+        return existing
+
+    resolution = {
+        "value": value,
+        "optionLabel": option_label,
+        "setByUserId": set_by_user_id,
+        "setByName": set_by_name,
+        "setAt": _now(),
     }
+    brief[field] = resolution
+    get_supabase().table("collab_rooms").update({"trip_brief": brief}).eq("id", room["id"]).execute()
+    return resolution
 
 
-def set_generated_trip(code: str, trip_id: str) -> None:
-    get_supabase().table("collab_rooms").update({"generated_trip_id": trip_id}).eq("code", code.upper()).execute()
+def set_generated_trip(code: str, trip_id: str, trip_brief_snapshot: dict) -> None:
+    get_supabase().table("collab_rooms").update(
+        {"generated_trip_id": trip_id, "generated_trip_brief": trip_brief_snapshot}
+    ).eq("code", code.upper()).execute()

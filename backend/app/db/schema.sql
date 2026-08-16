@@ -27,8 +27,13 @@ create table if not exists trips (
   travelers integer not null default 1,
   status text not null default 'pending',
   currency text not null default 'USD',
+  group_preferences_summary text,
+  label text,
   created_at timestamptz not null default now()
 );
+
+alter table trips add column if not exists group_preferences_summary text;
+alter table trips add column if not exists label text;
 
 create table if not exists trip_tiers (
   id uuid primary key default gen_random_uuid(),

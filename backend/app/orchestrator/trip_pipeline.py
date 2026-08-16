@@ -31,22 +31,34 @@ def _total_price(
     return round(flight.price + stay_per_night * nights + daily_spend * days * travelers)
 
 
-async def run_trip_pipeline(input_data: TripSearchInput, budget_raw: str) -> TripResult:
+async def run_trip_pipeline(
+    input_data: TripSearchInput,
+    budget_raw: str,
+    group_preferences: str | None = None,
+    group_preferences_summary: str | None = None,
+    reuse_trip_id: str | None = None,
+    label: str | None = None,
+) -> TripResult:
     started = datetime.now(timezone.utc)
     days = trip_length_days(input_data.start_date, input_data.end_date)
     nights = trip_length_nights(input_data.start_date, input_data.end_date)
     settings = get_settings()
 
     destination = await get_destination_facts(input_data.destination)
-    trip_id = create_pending_trip(
-        origin_city=input_data.origin_city,
-        destination_slug=destination.slug,
-        start_date=input_data.start_date,
-        end_date=input_data.end_date,
-        budget_raw=budget_raw,
-        budget_normalized=input_data.budget,
-        travelers=input_data.travelers,
-    )
+    if reuse_trip_id:
+        trip_id = reuse_trip_id
+        mark_trip_status(trip_id, "pending")
+    else:
+        trip_id = create_pending_trip(
+            origin_city=input_data.origin_city,
+            destination_slug=destination.slug,
+            start_date=input_data.start_date,
+            end_date=input_data.end_date,
+            budget_raw=budget_raw,
+            budget_normalized=input_data.budget,
+            travelers=input_data.travelers,
+            label=label,
+        )
 
     try:
         flight = await run_flight_search_agent(
@@ -110,7 +122,10 @@ async def run_trip_pipeline(input_data: TripSearchInput, budget_raw: str) -> Tri
         )
 
         itinerary_results = await asyncio.gather(
-            *[run_itinerary_agent(destination=destination, tier=tier, days=days) for tier in TIER_ORDER],
+            *[
+                run_itinerary_agent(destination=destination, tier=tier, days=days, preferences_text=group_preferences)
+                for tier in TIER_ORDER
+            ],
             return_exceptions=True,
         )
 
@@ -150,7 +165,12 @@ async def run_trip_pipeline(input_data: TripSearchInput, budget_raw: str) -> Tri
         if needs_retry:
             log.warning("retrying failed itinerary stages once", tiers=[t.tier for t in needs_retry])
             retries = await asyncio.gather(
-                *[run_itinerary_agent(destination=destination, tier=t.tier, days=days) for t in needs_retry]
+                *[
+                    run_itinerary_agent(
+                        destination=destination, tier=t.tier, days=days, preferences_text=group_preferences
+                    )
+                    for t in needs_retry
+                ]
             )
             for tier_model, retry in zip(needs_retry, retries, strict=True):
                 if not isinstance(retry, Exception):
@@ -169,6 +189,8 @@ async def run_trip_pipeline(input_data: TripSearchInput, budget_raw: str) -> Tri
             tiers=tiers,
             generated_at=datetime.now(timezone.utc).isoformat(),
             currency=trip_currency,
+            group_preferences_summary=group_preferences_summary,
+            label=label,
         )
 
         issues = validate_trip_result(result, days, nights, fx_rate)

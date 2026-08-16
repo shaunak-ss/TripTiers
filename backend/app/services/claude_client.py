@@ -19,12 +19,16 @@ _client: AsyncAnthropic | None = None
 
 def _coerce_stringified_json(value: Any) -> Any:
     """Claude's forced tool_use occasionally emits a nested array/object field as a
-    JSON-encoded string instead of native JSON. Recursively unwrap those before validation."""
+    JSON-encoded string instead of native JSON. Recursively unwrap those before validation.
+    Occasionally it also glues trailing content (e.g. a sibling field it meant to emit
+    separately) onto the end of that string — raw_decode parses just the leading valid
+    JSON value and ignores whatever comes after, instead of failing on the whole string."""
     if isinstance(value, str):
         stripped = value.strip()
         if stripped[:1] in "[{":
             try:
-                return _coerce_stringified_json(json.loads(stripped))
+                parsed, _end = json.JSONDecoder().raw_decode(stripped)
+                return _coerce_stringified_json(parsed)
             except json.JSONDecodeError:
                 return value
         return value
