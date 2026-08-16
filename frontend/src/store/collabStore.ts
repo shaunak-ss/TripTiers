@@ -38,6 +38,7 @@ export const useCollabStore = create<CollabState>()(
           members: [{ userId: host.id, displayName: host.name, email: host.email, joinedAt: now }],
           messages: [],
           createdAt: now,
+          tripBrief: {},
         };
         set((state) => ({ rooms: [room, ...state.rooms] }));
         return room;
@@ -71,6 +72,7 @@ export const useCollabStore = create<CollabState>()(
           displayName: user.name,
           body: text,
           createdAt: new Date().toISOString(),
+          kind: "text",
         };
         set((state) => ({
           rooms: state.rooms.map((item) =>

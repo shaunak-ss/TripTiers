@@ -72,6 +72,26 @@ export async function syncPostMessage(input: { code: string; body: string }): Pr
   return (await res.json()) as CollabMessage;
 }
 
+export async function syncSelectOption(input: {
+  code: string;
+  messageId: string;
+  value: string;
+}): Promise<CollabMessage> {
+  const res = await fetch(
+    `${API_BASE}/api/collab/rooms/${encodeURIComponent(input.code)}/messages/${encodeURIComponent(input.messageId)}/select`,
+    {
+      method: "POST",
+      headers: await authHeaders(),
+      body: JSON.stringify({ value: input.value }),
+    }
+  );
+  if (!res.ok) {
+    const parsed = await parseJson(res);
+    throw new Error((parsed.message as string) || "Could not select that.");
+  }
+  return (await res.json()) as CollabMessage;
+}
+
 export interface GenerateFromChatInput {
   roomCode: string;
   memberCount: number;
