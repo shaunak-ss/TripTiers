@@ -1,0 +1,153 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "@fontsource-variable/geist";
+
+@custom-variant dark (&:is(.dark *));
+
+@theme {
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-display: "Geist Variable", "General Sans", ui-sans-serif, system-ui,
+    sans-serif;
+
+  --color-brand-50: #f0f9ff;
+  --color-brand-100: #e0f2fe;
+  --color-brand-500: #0ea5e9;
+  --color-brand-600: #0284c7;
+  --color-brand-900: #0c4a6e;
+
+  --color-accent-500: #f97316;
+  --color-accent-600: #ea580c;
+
+  --color-tier-backpacker: #22c55e;
+  --color-tier-comfort: #0ea5e9;
+  --color-tier-luxury: #a855f7;
+
+  --color-neutral-50: #fafafa;
+  --color-neutral-100: #f4f4f5;
+  --color-neutral-400: #a1a1aa;
+  --color-neutral-700: #3f3f46;
+  --color-neutral-900: #18181b;
+
+  --animate-gradient-shift: gradient-shift 12s ease infinite;
+  --animate-flight-path: flight-path 3.5s ease-in-out infinite;
+
+  @keyframes gradient-shift {
+    0%,
+    100% {
+      background-position: 0% 50%;
+    }
+    50% {
+      background-position: 100% 50%;
+    }
+  }
+
+  @keyframes flight-path {
+    0% {
+      stroke-dashoffset: 200;
+    }
+    100% {
+      stroke-dashoffset: 0;
+    }
+  }
+}
+
+:root {
+  /* A soft, warm-neutral off-white instead of pure white — easier on the eyes
+     for long reading sessions, still reads as clean and premium. */
+  --background: oklch(0.985 0.003 95);
+  --foreground: oklch(0.27 0.017 275);
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.27 0.017 275);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.27 0.017 275);
+  --primary: oklch(0.61 0.12 231);
+  --primary-foreground: oklch(0.99 0.004 231);
+  --secondary: oklch(0.965 0.006 95);
+  --secondary-foreground: oklch(0.3 0.017 275);
+  --muted: oklch(0.965 0.006 95);
+  --muted-foreground: oklch(0.55 0.017 275);
+  --accent: oklch(0.965 0.006 95);
+  --accent-foreground: oklch(0.3 0.017 275);
+  --destructive: oklch(0.58 0.19 27);
+  --destructive-foreground: oklch(0.99 0 0);
+  --border: oklch(0.91 0.006 95);
+  --input: oklch(0.91 0.006 95);
+  --ring: oklch(0.61 0.12 231);
+  --radius: 1rem;
+}
+
+.dark {
+  --background: oklch(0.16 0.012 275);
+  --foreground: oklch(0.96 0.006 275);
+  --card: oklch(0.2 0.013 275);
+  --card-foreground: oklch(0.96 0.006 275);
+  --popover: oklch(0.2 0.013 275);
+  --popover-foreground: oklch(0.96 0.006 275);
+  --primary: oklch(0.68 0.14 231);
+  --primary-foreground: oklch(0.16 0.012 275);
+  --secondary: oklch(0.27 0.012 275);
+  --secondary-foreground: oklch(0.96 0.006 275);
+  --muted: oklch(0.27 0.012 275);
+  --muted-foreground: oklch(0.68 0.02 275);
+  --accent: oklch(0.71 0.17 45);
+  --accent-foreground: oklch(0.99 0 0);
+  --destructive: oklch(0.7 0.19 27);
+  --destructive-foreground: oklch(0.16 0.012 275);
+  --border: oklch(1 0 0 / 10%);
+  --input: oklch(1 0 0 / 15%);
+  --ring: oklch(0.68 0.14 231);
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --radius-sm: calc(var(--radius) - 0.5rem);
+  --radius-md: calc(var(--radius) - 0.25rem);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 0.25rem);
+  --font-heading: var(--font-display);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply bg-background text-foreground font-sans antialiased;
+  }
+  html {
+    color-scheme: light;
+  }
+  h1,
+  h2,
+  h3,
+  h4 {
+    @apply font-display leading-tight;
+  }
+  :focus-visible {
+    @apply outline-2 outline-offset-2 outline-brand-500;
+  }
+}
+
+@layer utilities {
+  .safe-bottom {
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+}
