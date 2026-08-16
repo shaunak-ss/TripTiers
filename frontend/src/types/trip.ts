@@ -40,5 +40,6 @@ export interface TripResult {
   tiers: TripTier[]; // always exactly 3, order: backpacker, comfort, luxury
   generatedAt: string;
   currency: string; // ISO 4217 code for flight/stay/totalPrice fields — destination-local, not the search budget's currency
+  groupPreferencesSummary?: string; // only present for collab-generated trips
 }
 
