@@ -19,6 +19,7 @@ def create_pending_trip(
     budget_raw: str,
     budget_normalized: int,
     travelers: int,
+    label: str | None = None,
 ) -> str:
     sb = get_supabase()
     result = sb.table("trips").insert(
@@ -31,6 +32,7 @@ def create_pending_trip(
             "budget_normalized": budget_normalized,
             "travelers": travelers,
             "status": "pending",
+            "label": label,
         }
     ).execute()
     if not result.data:
@@ -74,7 +76,13 @@ def persist_trip_result(result: TripResult) -> None:
                     for day in tier.itinerary
                 ]
             ).execute()
-    sb.table("trips").update({"status": "ready", "currency": result.currency}).eq("id", result.trip_id).execute()
+    sb.table("trips").update(
+        {
+            "status": "ready",
+            "currency": result.currency,
+            "group_preferences_summary": result.group_preferences_summary,
+        }
+    ).eq("id", result.trip_id).execute()
 
 
 def get_trip_result(trip_id: str) -> dict | None:
@@ -147,6 +155,8 @@ def get_trip_result(trip_id: str) -> dict | None:
         tiers=assembled,
         generated_at=str(trip.get("created_at") or datetime.now(timezone.utc).isoformat()),
         currency=trip.get("currency") or "USD",
+        group_preferences_summary=trip.get("group_preferences_summary"),
+        label=trip.get("label"),
     )
     return {"status": "ready", "result": result}
 
@@ -184,6 +194,7 @@ def list_saved_trips(user_id: str) -> list[dict]:
                 "tripId": result.trip_id,
                 "tier": tier.tier,
                 "destination": result.input.destination,
+                "label": result.label,
                 "startDate": result.input.start_date,
                 "endDate": result.input.end_date,
                 "savedAt": row.get("saved_at"),

@@ -41,5 +41,7 @@ async def extract_trip_from_chat(
         destination=result.destination,
         missing=result.missing_fields,
         travelers=result.travelers,
+        interests=result.interests,
+        pace=result.pace,
     )
     return result
