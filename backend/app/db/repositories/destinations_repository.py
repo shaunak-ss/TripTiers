@@ -88,7 +88,7 @@ async def bootstrap_destination(query: str) -> DestinationFacts:
                 "stayIdeas": agent_out.stay_ideas.model_dump(by_alias=True),
             }
         )
-        source = "claude"
+        source = "gemini"
     except Exception as exc:  # noqa: BLE001
         log.error("destination facts agent failed — using generic template", query=query, error=str(exc))
         city, country = fallback_city.title(), fallback_country.title()

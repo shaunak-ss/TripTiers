@@ -37,3 +37,17 @@ def test_unparseable():
     assert normalize_budget_value("") is None
     assert normalize_budget_value(0) is None
     assert normalize_budget_value(-5) is None
+
+
+def test_spelled_out_amounts():
+    assert normalize_budget_value("two thousand") == 2000
+    assert normalize_budget_value("twenty thousand") == 20000
+    assert normalize_budget_value("twenty five hundred") == 2500
+    assert normalize_budget_value("one lakh") == 100_000
+    assert normalize_budget_value("fifty thousand") == 50_000
+    assert normalize_budget_value("Two Thousand") == 2000
+
+
+def test_hundred_scale():
+    assert normalize_budget_value("1500") == 1500
+    assert normalize_budget_value("15 hundred") == 1500

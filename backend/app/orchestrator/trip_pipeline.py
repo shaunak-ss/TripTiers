@@ -40,8 +40,17 @@ async def run_trip_pipeline(
     label: str | None = None,
 ) -> TripResult:
     started = datetime.now(timezone.utc)
-    days = trip_length_days(input_data.start_date, input_data.end_date)
-    nights = trip_length_nights(input_data.start_date, input_data.end_date)
+    try:
+        days = trip_length_days(input_data.start_date, input_data.end_date)
+        nights = trip_length_nights(input_data.start_date, input_data.end_date)
+    except ValueError as exc:
+        raise AppError(
+            400,
+            "invalid_dates",
+            "Start date and end date need to be valid calendar dates.",
+        ) from exc
+    if nights < 1:
+        raise AppError(400, "invalid_dates", "End date must be after the start date.")
     settings = get_settings()
 
     destination = await get_destination_facts(input_data.destination)

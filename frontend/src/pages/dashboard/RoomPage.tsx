@@ -113,8 +113,8 @@ export function RoomPage() {
   };
 
   const copyInvite = async () => {
-    await navigator.clipboard.writeText(`${window.location.origin}/join/${room.code}`);
-    toast.success("Invite link copied.");
+    await navigator.clipboard.writeText(room.code);
+    toast.success("Invite code copied.");
   };
 
   const generate = async () => {
@@ -155,7 +155,7 @@ export function RoomPage() {
           <div className="min-w-0">
             <h1 className="truncate font-display text-lg font-semibold">{room.name}</h1>
             <p className="text-xs text-neutral-500">
-              Code {room.code} · {room.members.map((member) => member.displayName).join(", ")}
+              Code {room.code} · {[...room.members.map((member) => member.displayName), "TripTiers Assistant"].join(", ")}
             </p>
           </div>
           <div className="flex flex-wrap gap-2">
@@ -196,12 +196,14 @@ export function RoomPage() {
 
         <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4 sm:px-6">
           <p className="mb-4 rounded-2xl bg-brand-50 px-4 py-3 text-sm text-brand-900">
-            TripTiers Assistant will ask one thing at a time — tap an option or type in the box. Tap Generate once the
+            Chat freely — TripTiers Assistant only changes the trip when you type <code>/assistant</code> followed by
+            what you want, e.g. <code>/assistant 4 day trip to Thailand, budget 2000</code>. Tap Generate once the
             trip looks right.
           </p>
           {room.messages.length === 0 ? (
             <p className="text-sm text-neutral-500">
-              No messages yet. Say where you're thinking of going — TripTiers Assistant will help fill in the rest.
+              TripTiers Assistant is joining — say hi, then use <code>/assistant</code> to set destination, dates, or
+              budget.
             </p>
           ) : (
             <ul className="flex flex-col gap-3">

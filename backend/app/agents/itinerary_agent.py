@@ -12,7 +12,7 @@ from app.config import (
 )
 from app.prompts import ITINERARY_SYSTEM_PROMPT
 from app.services.cache_service import cache_get, cache_set, get_durable_json, set_durable_json
-from app.services.claude_client import create_structured_output
+from app.services.gemini_client import create_structured_output
 from app.utils.logger import get_logger
 from app.validators.schemas import DestinationFacts, ItineraryAgentOutput, ItineraryDay, TierId
 

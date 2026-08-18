@@ -4,8 +4,9 @@ import json
 
 from app.config import TIMEOUT_CLAUDE_CONCIERGE_S
 from app.prompts import CONCIERGE_SYSTEM_PROMPT
-from app.services.claude_client import create_structured_output
+from app.services.gemini_client import create_structured_output
 from app.services.trip_brief_fields import FIELD_LABELS, FIELD_OPTIONS, FIELD_ORDER
+from app.utils.dates import today_iso_date
 from app.utils.logger import get_logger
 from app.validators.schemas import ConciergeTurnOutput
 
@@ -24,6 +25,7 @@ async def run_concierge_turn(
     unresolved = [f for f in FIELD_ORDER if f not in known_brief]
     user = json.dumps(
         {
+            "today": today_iso_date(),
             "memberCount": member_count,
             "transcript": transcript,
             "knownBrief": {

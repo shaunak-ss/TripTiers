@@ -226,16 +226,16 @@ def resolve_field(
     set_by_name: str,
     allow_overwrite: bool = False,
 ) -> dict | None:
-    """First-write-wins update of one trip_brief field.
+    """Sets one trip_brief field, by default first-write-wins unless `allow_overwrite=True`.
 
     Returns the resolution that ended up in place (which may belong to someone else
-    if they beat this call), or None if the room doesn't exist. `allow_overwrite=True`
-    is for explicit chat-detected corrections to an already-set field, where the newest
-    call should win rather than the first.
+    if they beat this call), or None if the room doesn't exist. Any room member can
+    update an already-set field later — callers pass `allow_overwrite=True` for that
+    so the newest call wins rather than the first.
 
     Not perfectly atomic against a concurrent write between the read and this update —
-    acceptable for a small group trip-planning chat; a lost race here just means the
-    other member's pick silently wins, which matches "first response wins" either way.
+    acceptable for a small group trip-planning chat; a lost race here just means
+    whichever write lands last wins, which is fine for a live group chat.
     """
     room = get_room_by_code(code)
     if room is None:

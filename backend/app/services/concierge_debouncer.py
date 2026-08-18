@@ -1,11 +1,18 @@
 from __future__ import annotations
 
 import asyncio
+import re
 from datetime import datetime, timezone
 
 from app.agents.concierge_agent import BOT_DISPLAY_NAME, run_concierge_turn
 from app.db.repositories import collab_repository as collab_repo
-from app.services.trip_brief_fields import FIELD_LABELS, FIELD_OPTIONS, FIELD_ORDER, REQUIRED_FIELDS, normalize_field_value
+from app.services.trip_brief_fields import (
+    FIELD_LABELS,
+    FIELD_OPTIONS,
+    FIELD_ORDER,
+    REQUIRED_FIELDS,
+    normalize_field_value,
+)
 from app.services.trip_generation import generate_trip_for_room
 from app.utils.errors import AppError
 from app.utils.logger import get_logger
@@ -13,43 +20,29 @@ from app.validators.schemas import CollabChatMessage
 
 log = get_logger(__name__)
 
-_REPLY_DELAY_S = 6.0
-# Per-process debounce state — one pending reply task per room. Multiple human messages
-# (or a chip tap) in quick succession collapse into a single concierge turn once things
-# pause. Not shared across worker processes; fine for a single-uvicorn-worker deployment.
-_pending: dict[str, asyncio.Task] = {}
+_welcome_locks: dict[str, asyncio.Lock] = {}
+
+WELCOME_BODY = (
+    "Hi! I'm TripTiers Assistant. I only change the trip when you ask me to — type `/assistant` followed by "
+    "what you want, e.g. `/assistant 4 day trip to Thailand from Delhi, budget 2000`, and I'll update just "
+    "that. Tap Generate above whenever the trip looks ready."
+)
+
+# Accepts "/assistant" and the common typo "/assitant", case-insensitive.
+_COMMAND_PATTERN = re.compile(r"^/(assistant|assitant)\b\s*(.*)$", re.IGNORECASE | re.DOTALL)
 
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def schedule_concierge_reply(room_code: str) -> None:
-    code = room_code.upper()
-    existing = _pending.get(code)
-    if existing and not existing.done():
-        existing.cancel()
-    _pending[code] = asyncio.create_task(_run_after_delay(code))
-
-
-async def _run_after_delay(room_code: str) -> None:
-    try:
-        await asyncio.sleep(_REPLY_DELAY_S)
-    except asyncio.CancelledError:
-        return
-    try:
-        await _run_concierge_turn(room_code)
-    except Exception as exc:  # noqa: BLE001
-        log.warning("concierge turn failed", room=room_code, error=str(exc))
-    finally:
-        _pending.pop(room_code, None)
-
-
-def _last_human_sender(messages: list[dict]) -> tuple[str | None, str]:
-    for message in reversed(messages):
-        if not message.get("isBot"):
-            return message.get("userId"), message.get("displayName") or "a member"
-    return None, "a member"
+def extract_assistant_command(text: str) -> str | None:
+    """Returns the instruction text after '/assistant' (or the '/assitant' typo), or None
+    if the message isn't a command at all."""
+    match = _COMMAND_PATTERN.match(text.strip())
+    if not match:
+        return None
+    return match.group(2).strip()
 
 
 def _last_bot_ask(messages: list[dict]) -> dict | None:
@@ -57,6 +50,27 @@ def _last_bot_ask(messages: list[dict]) -> dict | None:
         if message.get("isBot") and message.get("kind") in ("choice", "text"):
             return message
     return None
+
+
+async def ensure_assistant_welcome(room: dict) -> dict:
+    """Post the assistant's one-time intro so it's visible as soon as the room loads.
+
+    This is informational only — it never asks a question. The assistant stays silent
+    until someone sends an explicit /assistant command."""
+    code = str(room.get("code") or "").upper()
+    if not code:
+        return room
+    if any(message.get("isBot") for message in room.get("messages") or []):
+        return room
+
+    lock = _welcome_locks.setdefault(code, asyncio.Lock())
+    async with lock:
+        fresh = collab_repo.get_room_by_code(code) or room
+        if any(message.get("isBot") for message in fresh.get("messages") or []):
+            return fresh
+        collab_repo.add_system_message(code=code, display_name=BOT_DISPLAY_NAME, body=WELCOME_BODY)
+        log.info("concierge welcome posted", room=code)
+        return collab_repo.get_room_by_code(code) or fresh
 
 
 async def _trigger_generation(room_code: str, room: dict) -> None:
@@ -106,26 +120,18 @@ async def handle_generate_confirmation_select(
     return {**message, "meta": meta}
 
 
-async def _run_concierge_turn(room_code: str) -> None:
-    room = collab_repo.get_room_by_code(room_code)
+async def run_assistant_command(*, room_code: str, command_text: str, actor_user_id: str, actor_name: str) -> None:
+    """Applies exactly what one /assistant command asks for — never asks a follow-up
+    question or announces "ready" on its own. Only reacts to what's explicitly
+    stated in `command_text`, including answering an explicit "what are my options
+    for X" question with a tappable-chip message when the field has one."""
+    code = room_code.upper()
+    room = collab_repo.get_room_by_code(code)
     if room is None:
         return
 
-    messages = room.get("messages", [])
-    if not any(not m.get("isBot") for m in messages):
-        return
-
     brief: dict = dict(room.get("tripBrief") or {})
-
-    # Skip only if we're still waiting on an answer to the last open question — a system
-    # message (tap confirmation, correction, ready notice) or a fresh human message both
-    # mean there's something new to process.
-    last = messages[-1] if messages else None
-    if last and last.get("isBot") and last.get("kind") in ("choice", "text"):
-        open_field = (last.get("meta") or {}).get("field")
-        if open_field and open_field not in brief:
-            return
-
+    messages = room.get("messages", [])
     last_ask = _last_bot_ask(messages)
     pending_generate_confirmation = bool(
         last_ask
@@ -134,48 +140,70 @@ async def _run_concierge_turn(room_code: str) -> None:
         and not (last_ask.get("meta") or {}).get("resolved")
     )
 
-    transcript = "\n".join(
-        f"{BOT_DISPLAY_NAME if m.get('isBot') else m['displayName']}: {m['body']}"
-        for m in messages
-        if m.get("body", "").strip()
-    )
-    decision = await run_concierge_turn(
-        transcript=transcript,
-        member_count=len(room.get("members", [])),
-        known_brief=brief,
-        pending_generate_confirmation=pending_generate_confirmation,
-    )
-    set_by_user_id, set_by_name = _last_human_sender(messages)
+    transcript = f"{actor_name}: {command_text}"
 
-    newly_resolved: list[tuple[str, str]] = []
+    try:
+        decision = await run_concierge_turn(
+            transcript=transcript,
+            member_count=len(room.get("members", [])),
+            known_brief=brief,
+            pending_generate_confirmation=pending_generate_confirmation,
+        )
+    except Exception as exc:  # noqa: BLE001
+        log.warning("assistant command failed", room=code, error=str(exc))
+        collab_repo.add_system_message(
+            code=code,
+            display_name=BOT_DISPLAY_NAME,
+            body="⚠️ Couldn't process that just now — try rephrasing your /assistant command.",
+        )
+        return
+
+    set_by_user_id, set_by_name = actor_user_id, actor_name
+
+    # Any room member can set or later change any field — first-write-wins only
+    # matters for concurrent picks landing in the same instant, not for who
+    # "owns" a field afterwards, so this always overwrites.
+    newly_set: list[tuple[str, str]] = []
+    updated: list[tuple[str, str]] = []
     for answer in decision.resolved_fields:
         field = answer.field
-        if field not in FIELD_ORDER or field in brief:
+        if field not in FIELD_ORDER:
             continue
         normalized = normalize_field_value(field, answer.value)
         if normalized is None:
             continue
         value, option_label = normalized
+        was_resolved = field in brief
         result = collab_repo.resolve_field(
-            code=room_code,
+            code=code,
             field=field,
             value=value,
             option_label=option_label,
             set_by_user_id=set_by_user_id,
             set_by_name=set_by_name,
-            allow_overwrite=False,
+            allow_overwrite=True,
         )
         if result is not None:
             brief[field] = result
-            newly_resolved.append((field, result["optionLabel"]))
+            (updated if was_resolved else newly_set).append((field, result["optionLabel"]))
 
-    if newly_resolved:
-        if len(newly_resolved) == 1:
-            field, label = newly_resolved[0]
+    if newly_set:
+        if len(newly_set) == 1:
+            field, label = newly_set[0]
             body = f"✅ {FIELD_LABELS.get(field, field)} set to {label}."
         else:
-            body = "✅ " + " · ".join(f"{FIELD_LABELS.get(f, f)}: {label}" for f, label in newly_resolved)
-        collab_repo.add_system_message(code=room_code, display_name=BOT_DISPLAY_NAME, body=body)
+            body = "✅ " + " · ".join(f"{FIELD_LABELS.get(f, f)}: {label}" for f, label in newly_set)
+        collab_repo.add_system_message(code=code, display_name=BOT_DISPLAY_NAME, body=body)
+
+    if updated:
+        if len(updated) == 1:
+            field, label = updated[0]
+            body = f"🔄 {FIELD_LABELS.get(field, field)} updated to {label}."
+        else:
+            body = "🔄 " + " · ".join(f"{FIELD_LABELS.get(f, f)}: {label}" for f, label in updated)
+        collab_repo.add_system_message(code=code, display_name=BOT_DISPLAY_NAME, body=body)
+
+    newly_resolved = newly_set + updated
 
     if decision.changed_field and decision.changed_field in brief:
         field = decision.changed_field
@@ -183,7 +211,7 @@ async def _run_concierge_turn(room_code: str) -> None:
         if normalized is not None:
             value, option_label = normalized
             result = collab_repo.resolve_field(
-                code=room_code,
+                code=code,
                 field=field,
                 value=value,
                 option_label=option_label,
@@ -194,10 +222,25 @@ async def _run_concierge_turn(room_code: str) -> None:
             if result is not None:
                 brief[field] = result
                 collab_repo.add_system_message(
-                    code=room_code,
+                    code=code,
                     display_name=BOT_DISPLAY_NAME,
                     body=f"🔄 {FIELD_LABELS.get(field, field)} updated to {result['optionLabel']}.",
                 )
+
+    if decision.should_ask and decision.ask_field:
+        field = decision.ask_field
+        options = decision.ask_options or FIELD_OPTIONS.get(field) or []
+        body = decision.ask_message or f"Here are the options for {FIELD_LABELS.get(field, field)}:"
+        if options:
+            collab_repo.add_bot_message(
+                code=code,
+                display_name=BOT_DISPLAY_NAME,
+                body=body,
+                kind="choice",
+                meta={"field": field, "options": options},
+            )
+        else:
+            collab_repo.add_bot_message(code=code, display_name=BOT_DISPLAY_NAME, body=body, kind="text")
 
     if decision.generate_confirmed and pending_generate_confirmation and last_ask:
         resolved = {
@@ -209,13 +252,13 @@ async def _run_concierge_turn(room_code: str) -> None:
         }
         collab_repo.set_message_resolved_meta(last_ask["id"], resolved)
         room["tripBrief"] = brief
-        await _trigger_generation(room_code, room)
+        await _trigger_generation(code, room)
     elif decision.generate_requested and not pending_generate_confirmation:
         existing_trip_id = room.get("generatedTripId")
         unchanged = bool(existing_trip_id) and brief == (room.get("generatedTripBrief") or {})
         if unchanged:
             collab_repo.add_system_message(
-                code=room_code,
+                code=code,
                 display_name=BOT_DISPLAY_NAME,
                 body="✅ Already generated with the current details — check Saved Trips or tap 'View itinerary' above.",
             )
@@ -224,14 +267,14 @@ async def _run_concierge_turn(room_code: str) -> None:
             if still_missing:
                 labels = ", ".join(FIELD_LABELS.get(f, f) for f in still_missing)
                 collab_repo.add_system_message(
-                    code=room_code,
+                    code=code,
                     display_name=BOT_DISPLAY_NAME,
-                    body=f"Almost there — I still need: {labels}.",
+                    body=f"I can generate it, but I still need: {labels}. Send another /assistant command with those details first.",
                 )
             else:
                 verb = "regenerate" if existing_trip_id else "generate"
                 collab_repo.add_bot_message(
-                    code=room_code,
+                    code=code,
                     display_name=BOT_DISPLAY_NAME,
                     body=f"Ready to {verb} the itinerary with what we've got so far?",
                     kind="choice",
@@ -239,31 +282,25 @@ async def _run_concierge_turn(room_code: str) -> None:
                 )
 
     if (
-        decision.should_ask
-        and decision.ask_field
-        and decision.ask_field in FIELD_ORDER
-        and decision.ask_field not in brief
+        not newly_resolved
+        and not decision.changed_field
+        and not decision.generate_confirmed
+        and not decision.generate_requested
+        and not (decision.should_ask and decision.ask_field)
     ):
-        field = decision.ask_field
-        options = FIELD_OPTIONS.get(field, [])
-        kind = "choice" if options else "text"
-        meta: dict = {"field": field}
-        if options:
-            meta["options"] = options
-        body = decision.ask_message.strip() or f"What's the {FIELD_LABELS.get(field, field).lower()}?"
-        collab_repo.add_bot_message(code=room_code, display_name=BOT_DISPLAY_NAME, body=body, kind=kind, meta=meta)
-
-    if decision.ready_message.strip():
         collab_repo.add_system_message(
-            code=room_code, display_name=BOT_DISPLAY_NAME, body="✅ " + decision.ready_message.strip()
+            code=code,
+            display_name=BOT_DISPLAY_NAME,
+            body="I didn't catch anything to change there — try `/assistant <what you want>`, e.g. "
+            "`/assistant 4 day trip to Thailand, budget 2000`.",
         )
 
     log.info(
-        "concierge turn applied",
-        room=room_code,
+        "assistant command applied",
+        room=code,
         resolved=[f for f, _ in newly_resolved],
         changed=decision.changed_field or None,
-        asked=decision.ask_field if decision.should_ask else None,
+        answered_options_for=decision.ask_field if decision.should_ask else None,
         generate_confirmed=decision.generate_confirmed,
         generate_requested=decision.generate_requested,
     )

@@ -97,8 +97,8 @@ class Settings(BaseSettings):
     supabase_service_role_key: str
     supabase_anon_key: str | None = None
 
-    anthropic_api_key: str
-    anthropic_model: str = "claude-sonnet-5"
+    gemini_api_key: str
+    gemini_model: str = "gemini-flash-lite-latest"
 
     kiwi_api_key: str | None = None
     kiwi_api_base: str = "https://api.tequila.kiwi.com"

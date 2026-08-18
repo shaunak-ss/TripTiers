@@ -5,7 +5,12 @@ from app.agents.concierge_agent import BOT_DISPLAY_NAME
 from app.auth.deps import CurrentUserDep
 from app.db.repositories import collab_repository as collab_repo
 from app.orchestrator.trip_pipeline import run_trip_pipeline
-from app.services.concierge_debouncer import handle_generate_confirmation_select, schedule_concierge_reply
+from app.services.concierge_debouncer import (
+    ensure_assistant_welcome,
+    extract_assistant_command,
+    handle_generate_confirmation_select,
+    run_assistant_command,
+)
 from app.services.trip_brief_fields import FIELD_LABELS, normalize_field_value
 from app.services.trip_generation import build_group_preferences, generate_trip_for_room
 from app.utils.errors import AppError
@@ -57,13 +62,14 @@ def _member_room(code: str, user_id: str) -> dict:
 @router.post("/rooms")
 async def create_room(body: CollabRoomBody, user: CurrentUserDep):
     try:
-        return collab_repo.create_room(
+        room = collab_repo.create_room(
             name=body.name.strip() or f"{user.name}'s trip room",
             host_user_id=user.id,
             display_name=user.name,
             email=user.email,
             trip_id=body.trip_id,
         )
+        return await ensure_assistant_welcome(room)
     except AppError:
         raise
     except Exception as exc:  # noqa: BLE001
@@ -73,12 +79,13 @@ async def create_room(body: CollabRoomBody, user: CurrentUserDep):
 @router.post("/rooms/join")
 async def join_room(body: CollabJoinBody, user: CurrentUserDep):
     try:
-        return collab_repo.join_room(
+        room = collab_repo.join_room(
             code=body.code,
             user_id=user.id,
             display_name=user.name,
             email=user.email,
         )
+        return await ensure_assistant_welcome(room)
     except KeyError as exc:
         raise AppError(404, "room_not_found", "That invite code does not match a room.") from exc
     except AppError:
@@ -90,7 +97,8 @@ async def join_room(body: CollabJoinBody, user: CurrentUserDep):
 @router.get("/rooms/{code}")
 async def get_room(code: str, user: CurrentUserDep):
     try:
-        return _member_room(code, user.id)
+        room = _member_room(code, user.id)
+        return await ensure_assistant_welcome(room)
     except AppError:
         raise
     except Exception as exc:  # noqa: BLE001
@@ -109,7 +117,18 @@ async def post_message(code: str, body: CollabMessageBody, user: CurrentUserDep)
             display_name=user.name,
             body=text,
         )
-        schedule_concierge_reply(code)
+        command = extract_assistant_command(text)
+        if command is not None:
+            if command:
+                await run_assistant_command(
+                    room_code=code, command_text=command, actor_user_id=user.id, actor_name=user.name
+                )
+            else:
+                collab_repo.add_system_message(
+                    code=code,
+                    display_name=BOT_DISPLAY_NAME,
+                    body="Tell me what to change after /assistant — e.g. `/assistant 4 day trip to Thailand, budget 2000`.",
+                )
         return message
     except KeyError as exc:
         raise AppError(404, "room_not_found", "That invite code does not match a room.") from exc
@@ -144,6 +163,8 @@ async def select_option(code: str, message_id: str, body: CollabSelectBody, user
             raise AppError(400, "invalid_selection", "Could not understand that selection.")
         value, option_label = normalized
 
+        # Any room member can change any field, including one someone else already
+        # picked — the newest tap wins.
         already_resolved = bool(room["tripBrief"].get(field))
         result = collab_repo.resolve_field(
             code=code,
@@ -152,19 +173,18 @@ async def select_option(code: str, message_id: str, body: CollabSelectBody, user
             option_label=option_label,
             set_by_user_id=user.id,
             set_by_name=user.name,
-            allow_overwrite=False,
+            allow_overwrite=True,
         )
         if result is None:
             raise AppError(404, "room_not_found", "That invite code does not match a room.")
 
         collab_repo.set_message_resolved_meta(message_id, result)
-        if not already_resolved:
-            collab_repo.add_system_message(
-                code=code,
-                display_name=BOT_DISPLAY_NAME,
-                body=f"✅ {FIELD_LABELS.get(field, field)} set to {result['optionLabel']} — picked by {result['setByName']}.",
-            )
-            schedule_concierge_reply(code)
+        verb = "updated to" if already_resolved else "set to"
+        collab_repo.add_system_message(
+            code=code,
+            display_name=BOT_DISPLAY_NAME,
+            body=f"✅ {FIELD_LABELS.get(field, field)} {verb} {result['optionLabel']} — picked by {result['setByName']}.",
+        )
 
         meta = dict(message.get("meta") or {})
         meta["resolved"] = result
