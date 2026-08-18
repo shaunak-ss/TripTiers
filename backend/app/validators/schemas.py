@@ -98,6 +98,8 @@ class TripResult(CamelModel):
     tiers: list[TripTier]
     generated_at: str
     currency: str = "USD"
+    group_preferences_summary: str | None = None
+    label: str | None = None
 
 
 class TieringDraft(CamelModel):
@@ -198,7 +200,29 @@ class CollabExtractOutput(CamelModel):
     budget: int = 0
     travelers: int = 1
     notes: str = ""
+    interests: list[str] = Field(default_factory=list)
+    must_sees: list[str] = Field(default_factory=list)
+    pace: str = ""
+    dietary: str = ""
     missing_fields: list[str] = Field(default_factory=list)
+
+
+class ConciergeFieldAnswer(CamelModel):
+    field: str
+    value: str
+
+
+class ConciergeTurnOutput(CamelModel):
+    resolved_fields: list[ConciergeFieldAnswer] = Field(default_factory=list)
+    changed_field: str = ""
+    changed_value: str = ""
+    should_ask: bool = False
+    ask_field: str = ""
+    ask_message: str = ""
+    ask_options: list[str] = Field(default_factory=list)
+    ready_message: str = ""
+    generate_requested: bool = False
+    generate_confirmed: bool = False
 
 
 def tool_json_schema(model: type[BaseModel]) -> dict[str, Any]:

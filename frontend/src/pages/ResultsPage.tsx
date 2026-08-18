@@ -1,4 +1,5 @@
 import { motion } from "framer-motion";
+import { Sparkles } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { PageTransition } from "@/components/layout/PageTransition";
@@ -69,6 +70,12 @@ export function ResultsPage() {
                   {formatDateRange(trip.input.startDate, trip.input.endDate)} ·{" "}
                   {tripLengthNights(trip.input.startDate, trip.input.endDate)} nights
                 </h1>
+                {trip.groupPreferencesSummary && (
+                  <p className="mt-2 inline-flex items-center gap-1.5 rounded-full bg-brand-50 px-3 py-1.5 text-xs font-medium text-brand-900">
+                    <Sparkles className="size-3.5" />
+                    {trip.groupPreferencesSummary}
+                  </p>
+                )}
                 <p className="mt-1 text-sm text-neutral-500 dark:text-neutral-400">
                   Three ways to take this trip. Pick the one that feels like you.
                 </p>

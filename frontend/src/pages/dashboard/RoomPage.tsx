@@ -4,10 +4,18 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 import { toast } from "sonner";
 import { PageTransition } from "@/components/layout/PageTransition";
 import { Button } from "@/components/ui/button";
-import { generateItineraryFromChat, fetchRoom, serializeMessages, syncJoinRoom, syncPostMessage } from "@/lib/collabApi";
+import {
+  generateItineraryFromChat,
+  fetchRoom,
+  serializeMessages,
+  syncJoinRoom,
+  syncPostMessage,
+  syncSelectOption,
+} from "@/lib/collabApi";
 import { cn } from "@/lib/utils";
 import { useAuthStore } from "@/store/authStore";
 import { useCollabStore } from "@/store/collabStore";
+import { TRIP_BRIEF_FIELD_ORDER, TRIP_BRIEF_LABELS } from "@/types/collab";
 
 export function RoomPage() {
   const { code = "" } = useParams<{ code: string }>();
@@ -18,6 +26,7 @@ export function RoomPage() {
   const navigate = useNavigate();
   const [draft, setDraft] = useState("");
   const [generating, setGenerating] = useState(false);
+  const [selectingMessageId, setSelectingMessageId] = useState<string | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -83,9 +92,29 @@ export function RoomPage() {
     }
   };
 
+  const handleSelect = async (messageId: string, value: string) => {
+    if (selectingMessageId) return;
+    setSelectingMessageId(messageId);
+    try {
+      const remote = await syncSelectOption({ code: room.code, messageId, value });
+      const latest = await fetchRoom(room.code);
+      if (latest) mergeRoom(latest);
+      else {
+        mergeRoom({
+          ...room,
+          messages: room.messages.map((message) => (message.id === remote.id ? remote : message)),
+        });
+      }
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not select that.");
+    } finally {
+      setSelectingMessageId(null);
+    }
+  };
+
   const copyInvite = async () => {
-    await navigator.clipboard.writeText(`${window.location.origin}/join/${room.code}`);
-    toast.success("Invite link copied.");
+    await navigator.clipboard.writeText(room.code);
+    toast.success("Invite code copied.");
   };
 
   const generate = async () => {
@@ -117,6 +146,8 @@ export function RoomPage() {
     }
   };
 
+  const tripBrief = room.tripBrief ?? {};
+
   return (
     <PageTransition>
       <div className="flex h-[calc(100dvh-3.5rem)] flex-col md:h-dvh">
@@ -124,7 +155,7 @@ export function RoomPage() {
           <div className="min-w-0">
             <h1 className="truncate font-display text-lg font-semibold">{room.name}</h1>
             <p className="text-xs text-neutral-500">
-              Code {room.code} · {room.members.map((member) => member.displayName).join(", ")}
+              Code {room.code} · {[...room.members.map((member) => member.displayName), "TripTiers Assistant"].join(", ")}
             </p>
           </div>
           <div className="flex flex-wrap gap-2">
@@ -145,16 +176,89 @@ export function RoomPage() {
           </div>
         </header>
 
+        <div className="flex shrink-0 gap-2 overflow-x-auto border-b border-border/70 px-4 py-2.5 sm:px-6">
+          {TRIP_BRIEF_FIELD_ORDER.map((field) => {
+            const entry = tripBrief[field];
+            return (
+              <span
+                key={field}
+                className={cn(
+                  "shrink-0 rounded-full px-3 py-1 text-xs font-medium",
+                  entry ? "bg-brand-50 text-brand-900" : "bg-neutral-100 text-neutral-400"
+                )}
+              >
+                {TRIP_BRIEF_LABELS[field]}
+                {entry ? `: ${entry.optionLabel}` : ""}
+              </span>
+            );
+          })}
+        </div>
+
         <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4 sm:px-6">
           <p className="mb-4 rounded-2xl bg-brand-50 px-4 py-3 text-sm text-brand-900">
-            Talk through destination, dates, budget, who is coming, and must-sees. When you tap Generate, we read the
-            whole thread and build one itinerary for the group.
+            Chat freely — TripTiers Assistant only changes the trip when you type <code>/assistant</code> followed by
+            what you want, e.g. <code>/assistant 4 day trip to Thailand, budget 2000</code>. Tap Generate once the
+            trip looks right.
           </p>
           {room.messages.length === 0 ? (
-            <p className="text-sm text-neutral-500">No messages yet. Start with where you want to go.</p>
+            <p className="text-sm text-neutral-500">
+              TripTiers Assistant is joining — say hi, then use <code>/assistant</code> to set destination, dates, or
+              budget.
+            </p>
           ) : (
             <ul className="flex flex-col gap-3">
               {room.messages.map((message) => {
+                const kind = message.kind ?? "text";
+
+                if (kind === "system") {
+                  return (
+                    <li key={message.id} className="flex justify-center">
+                      <span className="rounded-full bg-neutral-100 px-3 py-1 text-xs font-medium text-neutral-600">
+                        {message.body}
+                      </span>
+                    </li>
+                  );
+                }
+
+                if (kind === "choice") {
+                  return (
+                    <li key={message.id} className="flex justify-start">
+                      <div className="flex max-w-[85%] flex-col gap-2">
+                        <AssistantBubble body={message.body} />
+                        {message.meta?.resolved ? (
+                          <p className="ml-9 text-xs text-neutral-500">
+                            ✓ {message.meta.resolved.optionLabel} — picked by {message.meta.resolved.setByName}
+                          </p>
+                        ) : (
+                          <div className="ml-9 flex flex-wrap gap-2">
+                            {message.meta?.options?.map((option) => (
+                              <button
+                                key={option}
+                                type="button"
+                                disabled={selectingMessageId === message.id}
+                                onClick={() => void handleSelect(message.id, option)}
+                                className="rounded-full border border-brand-200 bg-white px-3 py-1.5 text-xs font-medium text-brand-700 transition hover:bg-brand-50 disabled:cursor-not-allowed disabled:opacity-60"
+                              >
+                                {option}
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    </li>
+                  );
+                }
+
+                if (message.isBot) {
+                  return (
+                    <li key={message.id} className="flex justify-start">
+                      <div className="flex max-w-[85%]">
+                        <AssistantBubble body={message.body} />
+                      </div>
+                    </li>
+                  );
+                }
+
                 const mine = message.userId === user.id;
                 return (
                   <li key={message.id} className={cn("flex", mine ? "justify-end" : "justify-start")}>
@@ -197,5 +301,19 @@ export function RoomPage() {
         </form>
       </div>
     </PageTransition>
+  );
+}
+
+function AssistantBubble({ body }: { body: string }) {
+  return (
+    <div className="flex items-start gap-2">
+      <div className="mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-full bg-brand-500 text-white">
+        <Sparkles className="size-3.5" />
+      </div>
+      <div className="rounded-2xl bg-brand-50 px-3.5 py-2.5 text-sm text-brand-900">
+        <p className="mb-0.5 text-[11px] font-semibold opacity-80">TripTiers Assistant</p>
+        <p className="whitespace-pre-wrap">{body}</p>
+      </div>
+    </div>
   );
 }

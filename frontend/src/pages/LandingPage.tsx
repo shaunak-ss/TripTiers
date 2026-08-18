@@ -58,7 +58,7 @@ export function LandingPage() {
           >
             <motion.div variants={staggerItem}>
               <Badge variant="secondary" className="rounded-full px-3 py-1 text-xs font-medium">
-                Real flights. Real itineraries. Zero guesswork.
+                
               </Badge>
             </motion.div>
 
@@ -94,7 +94,7 @@ export function LandingPage() {
         {/* Preview cards */}
         <section className="mx-auto max-w-6xl px-4 pb-20 sm:px-6">
           <motion.div variants={fadeUp} initial="hidden" animate="show" className="mb-8 text-center">
-            <p className="text-sm font-medium tracking-wide text-brand-600 uppercase">Delhi → Bali · 7 nights</p>
+            <p className="text-sm font-medium tracking-wide text-brand-600 uppercase"></p>
             <h2 className="mt-2 font-display text-2xl font-semibold sm:text-3xl">
               See the shape of the decision before you even search
             </h2>

@@ -53,9 +53,8 @@ export function InvitePage() {
   };
 
   const copyInvite = async (code: string) => {
-    const url = `${window.location.origin}/join/${code}`;
-    await navigator.clipboard.writeText(url);
-    toast.success("Invite link copied.");
+    await navigator.clipboard.writeText(code);
+    toast.success("Invite code copied.");
   };
 
   return (

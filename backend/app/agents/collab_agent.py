@@ -4,7 +4,7 @@ import json
 
 from app.config import TIMEOUT_CLAUDE_COLLAB_S
 from app.prompts import COLLAB_SYSTEM_PROMPT
-from app.services.claude_client import create_structured_output
+from app.services.gemini_client import create_structured_output
 from app.utils.logger import get_logger
 from app.validators.schemas import CollabChatMessage, CollabExtractOutput
 
@@ -41,5 +41,7 @@ async def extract_trip_from_chat(
         destination=result.destination,
         missing=result.missing_fields,
         travelers=result.travelers,
+        interests=result.interests,
+        pace=result.pace,
     )
     return result

@@ -2,7 +2,7 @@ import json
 
 from app.config import TIMEOUT_CLAUDE_TIERING_S
 from app.prompts import TIERING_SYSTEM_PROMPT
-from app.services.claude_client import create_structured_output
+from app.services.gemini_client import create_structured_output
 from app.utils.logger import get_logger
 from app.validators.schemas import DestinationFacts, FlightOption, HotelCostEstimate, TierId, TieringAgentOutput
 

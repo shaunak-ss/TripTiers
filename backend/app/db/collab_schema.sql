@@ -55,6 +55,8 @@ create table collab_rooms (
   trip_id text,
   generated_trip_id text,
   host_user_id uuid not null references auth.users(id) on delete cascade,
+  trip_brief jsonb not null default '{}'::jsonb,
+  generated_trip_brief jsonb not null default '{}'::jsonb,
   created_at timestamptz not null default now()
 );
 
@@ -71,10 +73,14 @@ create table collab_members (
 create table collab_messages (
   id uuid primary key default gen_random_uuid(),
   room_id uuid not null references collab_rooms(id) on delete cascade,
-  user_id uuid not null references auth.users(id) on delete cascade,
+  user_id uuid references auth.users(id) on delete cascade,
   display_name text not null,
   body text not null,
-  created_at timestamptz not null default now()
+  is_bot boolean not null default false,
+  kind text not null default 'text' check (kind in ('text', 'choice', 'system')),
+  meta jsonb not null default '{}'::jsonb,
+  created_at timestamptz not null default now(),
+  constraint collab_messages_user_or_bot check (is_bot or user_id is not null)
 );
 
 create index if not exists idx_collab_messages_room on collab_messages (room_id, created_at);

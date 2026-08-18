@@ -33,10 +33,12 @@ TIMEOUT_CLAUDE_TIERING_S = 14.0
 TIMEOUT_CLAUDE_ITINERARY_S = 12.0
 TIMEOUT_CLAUDE_FACTS_S = 25.0
 TIMEOUT_CLAUDE_COLLAB_S = 16.0
+TIMEOUT_CLAUDE_CONCIERGE_S = 12.0
 
 CACHE_TTL_FLIGHTS = 20 * 60
 CACHE_TTL_FLIGHTS_DURABLE = 24 * 60 * 60
 CACHE_TTL_ITINERARY = 24 * 60 * 60
+CACHE_TTL_ITINERARY_PERSONALIZED = 15 * 60
 CACHE_TTL_DESTINATION = 6 * 60 * 60
 CACHE_TTL_LOCATION = 7 * 24 * 60 * 60
 CACHE_TTL_FX = 6 * 60 * 60
@@ -95,8 +97,8 @@ class Settings(BaseSettings):
     supabase_service_role_key: str
     supabase_anon_key: str | None = None
 
-    anthropic_api_key: str
-    anthropic_model: str = "claude-sonnet-5"
+    gemini_api_key: str
+    gemini_model: str = "gemini-flash-lite-latest"
 
     kiwi_api_key: str | None = None
     kiwi_api_base: str = "https://api.tequila.kiwi.com"
@@ -144,6 +146,10 @@ def cache_key_flights(origin: str, dest: str, start: str, end: str) -> str:
 
 def cache_key_itinerary(slug: str, tier: str, days: int) -> str:
     return f"itinerary:{slug}:{tier}:{days}"
+
+
+def cache_key_itinerary_personalized(slug: str, tier: str, days: int, preferences_hash: str) -> str:
+    return f"itinerary:personalized:{slug}:{tier}:{days}:{preferences_hash}"
 
 
 def cache_key_destination(slug: str) -> str:
