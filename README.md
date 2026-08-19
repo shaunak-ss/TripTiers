@@ -95,70 +95,6 @@ The trip pipeline (`backend/app/orchestrator/trip_pipeline.py`) is the heart of 
 | External APIs | Kiwi Tequila (flight search), FX rate service (currency conversion) |
 | Deploy targets | Render / Fly.io / Railway / Cloud Run (backend, Docker), Vercel / Netlify (frontend, static) |
 
-## Repository structure
-
-```
-TripEase/
-├── backend/
-│   ├── app/
-│   │   ├── agents/          # Gemini-backed agents: tiering, itinerary, destination facts, concierge, collab-extract, flight search
-│   │   ├── auth/            # Supabase JWT verification (CurrentUserDep)
-│   │   ├── db/               # Repositories (trips, collab, destinations, flight cache) + collab_schema.sql + seed data
-│   │   ├── mcp_server/       # FastMCP server + underlying tool implementations (search_flights, get_destination_facts, estimate_hotel_cost, normalize_budget)
-│   │   ├── orchestrator/     # trip_pipeline.py — the end-to-end trip generation flow
-│   │   ├── prompts/          # System prompts (*.prompt.md) for each agent
-│   │   ├── routers/          # FastAPI routes: /api/trips, /api/collab, /api/me, /health
-│   │   ├── services/         # Gemini client, cache, Kiwi client, FX client, trip-brief field parsing, concierge command handling
-│   │   ├── utils/            # dates, number-word parsing, slugs, logging, retry, errors
-│   │   └── validators/       # Pydantic schemas + deterministic date/budget normalizers + trip result validator
-│   ├── tests/                 # pytest suite (date/budget normalizers, trip-brief fields, pipeline)
-│   └── Dockerfile
-├── frontend/
-│   ├── src/
-│   │   ├── components/        # ui/ (shadcn primitives), trip-search/, results/, layout/, auth/
-│   │   ├── pages/             # One file per route, incl. dashboard/ (rooms, invite, profile, trips)
-│   │   ├── store/             # Zustand stores: auth, trip search, collab rooms
-│   │   ├── lib/                # API clients, Supabase client, formatting, date helpers
-│   │   ├── mocks/              # Fixture trips so the UI runs standalone without a backend
-│   │   └── types/              # Shared TypeScript contracts (trip.ts, collab.ts)
-│   └── vercel.json / public/_redirects   # SPA rewrite config for Vercel / Netlify
-├── DEPLOY.md                  # Step-by-step production deployment checklist
-└── FRONTEND_CHATBOT_ITINERARY_SPEC.md   # Product spec for the group-chat trip planning flow
-```
-
-## Backend deep dive
-
-**Agents** (`backend/app/agents/`) — each wraps one Gemini call via `create_structured_output`, which enforces a Pydantic JSON schema on the model's response so the rest of the codebase works with typed objects, never raw text:
-
-- `flight_search_agent` — not actually an LLM call; wraps the Kiwi search deterministically and picks the cheapest option.
-- `tiering_agent` — given the real flight + hotel estimates, produces per-tier stay names/types, highlights, and a budget warning if needed. Never invents prices.
-- `itinerary_agent` — produces a day-by-day plan per tier, grounded in the destination's curated facts (attractions/neighborhoods/tips) so it can't hallucinate places that don't exist. Cached per destination+tier+day-count, with a separate short-TTL cache when group preferences personalize the result.
-- `destination_facts_agent` — bootstraps curated facts + a cost index for a destination the first time it's requested; subsequent requests hit the cache/DB.
-- `concierge_agent` — powers the Trip Room `/assistant` command: extracts trip-brief fields from a chat instruction, decides whether the user is asking a question that needs a multiple-choice answer (vs. giving an instruction), and resolves relative dates against "today".
-- `collab_agent` — extracts a full trip request from an entire room's chat transcript (used by the legacy/no-room-context generate path).
-
-**Orchestrator** (`backend/app/orchestrator/trip_pipeline.py`) ties the above together end-to-end (see [Architecture](#architecture)) and is called from both `/api/trips` (solo) and the collab generate flow (group).
-
-**Deterministic normalization** (`backend/app/validators/`, `backend/app/services/trip_brief_fields.py`) — before any value reaches the pipeline or gets stored in a trip brief, free-text chat input is normalized:
-
-- Dates: `date_normalizer.py` handles ISO, `DD/MM/YYYY`, and natural language ("3 august 2026", "next friday", "sept 5"), including spelled-out day numbers, with sensible year-rollover for partial dates.
-- Budget: `budget_normalizer.py` handles `"20k"`, `"₹20,000"`, `"twenty thousand"`, scale words, and currency symbols.
-- Travelers/tier/pace: spelled-out numbers and common synonyms ("solo", "a couple", "backpacking" → `backpacker`) are mapped to canonical values.
-
-**Collaboration** (`backend/app/routers/collab.py`, `backend/app/services/concierge_debouncer.py`) — rooms are silent by default; the assistant only acts when a member types `/assistant <instruction>`, extracting and posting confirmations for whatever it resolved, or a small inline multiple-choice question (`kind: "choice"`) when the member asked about available options for a field. Any member can update any already-resolved field — the room always reflects the latest tap/command, not just the first.
-
-**MCP server** (`backend/app/mcp_server/travel_tools_server.py`) exposes `search_flights_tool`, `get_destination_facts_tool`, `estimate_hotel_cost_tool`, and `normalize_budget_tool` over the Model Context Protocol, so the same deterministic/grounded tools the pipeline uses internally can be plugged into any MCP-compatible AI client.
-
-## Frontend deep dive
-
-- **Routing** (`src/App.tsx`) — public routes (landing, results, join-room, auth callback) under `SiteLayout`; a focused wizard flow (`/plan`, `/plan/generating`) under `FocusLayout`; and an authenticated dashboard (`/dashboard/*` — trips, invite, profile, rooms) gated by `RequireAuth`.
-- **State** — Zustand stores for auth (`authStore.ts`, backed by Supabase sessions), the solo trip wizard (`tripStore.ts`), and collaboration rooms (`collabStore.ts`).
-- **API client** (`src/lib/api.ts`, `src/lib/collabApi.ts`) — talks to the FastAPI backend when `VITE_API_URL` is set; otherwise falls back to `src/mocks/` fixtures so the UI is fully explorable without any backend running.
-- **Mock-first design** — every API function has a mock counterpart shaped identically to the real response, so the frontend was originally (and can still be) developed and demoed with zero backend dependency.
-
-## Getting started
-
-Requires **Python 3.11+** with [`uv`](https://docs.astral.sh/uv/), and **Node.js 20+** with npm.
 
 ### 1. Backend
 
@@ -186,32 +122,6 @@ Open the URL Vite prints (defaults to **http://localhost:5173**). Leave `VITE_AP
 
 Run `backend/app/db/collab_schema.sql` in your Supabase project's SQL editor to create the `profiles`, `collab_rooms`, `collab_members`, and `collab_messages` tables (safe to re-run).
 
-## Environment variables
-
-### Backend (`backend/.env`)
-
-| Variable | Required | Notes |
-|---|---|---|
-| `ENVIRONMENT` | No (default `development`) | `production` requires `REDIS_URL` and either `KIWI_MOCK=true` or `KIWI_API_KEY` |
-| `PORT` | No (default `3001`) | |
-| `CORS_ORIGIN` | Yes | Comma-separated list of allowed frontend origins |
-| `APP_CURRENCY` | No (default `USD`) | `USD` or `INR` |
-| `SUPABASE_URL` | Yes | |
-| `SUPABASE_SERVICE_ROLE_KEY` | Yes | Server-side key, never expose to the frontend |
-| `SUPABASE_ANON_KEY` | No | Needed for verifying frontend-issued JWTs |
-| `GEMINI_API_KEY` | Yes | Free key from [aistudio.google.com/apikey](https://aistudio.google.com/apikey) |
-| `GEMINI_MODEL` | No (default `gemini-flash-lite-latest`) | Use a `-lite` model for a higher free-tier quota |
-| `KIWI_API_KEY` | No | Kiwi Tequila is partner-only; leave unset with `KIWI_MOCK=true` for local dev |
-| `KIWI_MOCK` | No (default `false`) | Set `true` to skip live Kiwi calls |
-| `REDIS_URL` | Required in production | Falls back to in-memory cache if omitted in dev |
-
-### Frontend (`frontend/.env`)
-
-| Variable | Required | Notes |
-|---|---|---|
-| `VITE_API_URL` | No | Backend base URL. Omit to run entirely on mock data |
-| `VITE_SUPABASE_URL` | Yes (for auth) | |
-| `VITE_SUPABASE_ANON_KEY` | Yes (for auth) | |
 
 ## Testing
 
@@ -222,6 +132,3 @@ uv run pytest
 
 Covers date normalization, budget normalization, trip-brief field parsing, and the trip pipeline.
 
-## Deployment
-
-See [`DEPLOY.md`](DEPLOY.md) for a full checklist covering Supabase, Gemini, Redis, backend hosting (Render/Fly.io/Railway/Cloud Run), frontend hosting (Vercel/Netlify), CORS wiring, and smoke testing.
