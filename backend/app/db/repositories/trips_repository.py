@@ -176,55 +176,43 @@ def save_trip(user_id: str, trip_id: str) -> None:
 
 
 def list_saved_trips(user_id: str, *, page: int = 1, page_size: int = 20) -> dict:
-    """Paginated, batch-fetched summary of a user's saved trips.
+    """Paginated summary of a user's saved trips.
 
-    Avoids the N+1 pattern of calling get_trip_result() per row (which itself
-    issued several queries per trip) by fetching each related table once with
-    an `.in_()` filter across the whole page.
+    Each Supabase call is a real network round trip to a remote API, so the
+    goal isn't just fewer *rows* per query (see the `.in_()` batching this
+    replaced) but fewer *queries* full stop. This uses PostgREST resource
+    embedding (Supabase's equivalent of a SQL join) to pull saved_trips ->
+    trips -> destinations/trip_tiers in a single request instead of four
+    sequential ones.
     """
     sb = get_supabase()
     offset = (page - 1) * page_size
     rows_res = (
         sb.table("saved_trips")
-        .select("trip_id, saved_at")
+        .select(
+            "trip_id, saved_at, "
+            "trips(id, status, destination_slug, label, start_date, end_date, "
+            "destinations(city, country), trip_tiers(id, tier))"
+        )
         .eq("user_id", user_id)
         .order("saved_at", desc=True)
         .range(offset, offset + page_size - 1)
         .execute()
     )
     rows = rows_res.data or []
-    if not rows:
-        return {"items": [], "page": page, "pageSize": page_size, "hasMore": False}
-
-    trip_ids = [row["trip_id"] for row in rows]
-    trips_res = sb.table("trips").select("*").in_("id", trip_ids).execute()
-    trips_by_id = {trip["id"]: trip for trip in trips_res.data or []}
-
-    dest_slugs = list({trip["destination_slug"] for trip in trips_by_id.values()})
-    dest_by_slug: dict[str, dict] = {}
-    if dest_slugs:
-        dest_res = sb.table("destinations").select("slug, city, country").in_("slug", dest_slugs).execute()
-        dest_by_slug = {dest["slug"]: dest for dest in dest_res.data or []}
-
-    ready_trip_ids = [trip_id for trip_id, trip in trips_by_id.items() if trip["status"] == "ready"]
-    tiers_by_trip: dict[str, list[dict]] = {}
-    if ready_trip_ids:
-        tiers_res = sb.table("trip_tiers").select("*").in_("trip_id", ready_trip_ids).execute()
-        for tier in tiers_res.data or []:
-            tiers_by_trip.setdefault(tier["trip_id"], []).append(tier)
 
     out: list[dict] = []
     for row in rows:
-        trip = trips_by_id.get(row["trip_id"])
+        trip = row.get("trips")
         if not trip or trip["status"] != "ready":
             continue
-        tiers = tiers_by_trip.get(trip["id"], [])
+        tiers = trip.get("trip_tiers") or []
         tier = next((item for item in tiers if item["tier"] == "comfort"), None)
         if tier is None and tiers:
             tier = tiers[0]
         if tier is None:
             continue
-        dest = dest_by_slug.get(trip["destination_slug"])
+        dest = trip.get("destinations")
         destination_label = f"{dest['city']}, {dest['country']}" if dest else trip["destination_slug"]
         out.append(
             {

@@ -78,35 +78,31 @@ def assert_member(room: dict, user_id: str) -> None:
 
 
 def list_rooms_for_user(user_id: str, *, page: int = 1, page_size: int = 20) -> dict:
-    """Paginated, batch-fetched list of rooms a user belongs to.
+    """Paginated list of rooms a user belongs to.
 
-    Replaces the previous per-membership loop (one collab_rooms query, plus a
-    members query and a messages query per room) with one `.in_()` query per
-    related table, no matter how many rooms the user is in.
+    Uses PostgREST resource embedding (Supabase's join) to fetch memberships,
+    each room, and that room's member list in a single request instead of one
+    query per related table. Messages aren't embedded here — the room-list
+    view only ever renders name/code/member count, never message content, so
+    fetching a room's full chat history for every row in this list would be
+    pure waste; `get_room_by_code` still loads messages for the room-detail view.
     """
     sb = get_supabase()
-    memberships = sb.table("collab_members").select("room_id").eq("user_id", user_id).execute()
-    room_ids = list(dict.fromkeys(row["room_id"] for row in memberships.data or []))
-    if not room_ids:
+    memberships = (
+        sb.table("collab_members")
+        .select("room_id, collab_rooms(*, collab_members(*))")
+        .eq("user_id", user_id)
+        .execute()
+    )
+    rooms_by_id: dict[str, dict] = {}
+    for row in memberships.data or []:
+        room = row.get("collab_rooms")
+        if room and room["id"] not in rooms_by_id:
+            rooms_by_id[room["id"]] = room
+    if not rooms_by_id:
         return {"items": [], "page": page, "pageSize": page_size, "hasMore": False}
 
-    room_rows = (sb.table("collab_rooms").select("*").in_("id", room_ids).execute()).data or []
-    all_members = (sb.table("collab_members").select("*").in_("room_id", room_ids).execute()).data or []
-    all_messages = (
-        sb.table("collab_messages").select("*").in_("room_id", room_ids).order("created_at").execute()
-    ).data or []
-
-    members_by_room: dict[str, list[dict]] = {}
-    for member in all_members:
-        members_by_room.setdefault(member["room_id"], []).append(member)
-    messages_by_room: dict[str, list[dict]] = {}
-    for message in all_messages:
-        messages_by_room.setdefault(message["room_id"], []).append(message)
-
-    rooms = [
-        _assemble(room, members_by_room.get(room["id"], []), messages_by_room.get(room["id"], []))
-        for room in room_rows
-    ]
+    rooms = [_assemble(room, room.get("collab_members") or [], []) for room in rooms_by_id.values()]
     rooms.sort(key=lambda item: item["createdAt"], reverse=True)
 
     start = (page - 1) * page_size
