@@ -110,16 +110,22 @@ def get_trip_result(trip_id: str) -> dict | None:
     dest = dest_res.data[0] if dest_res.data else None
     destination_label = f"{dest['city']}, {dest['country']}" if dest else trip["destination_slug"]
 
-    tiers_res = sb.table("trip_tiers").select("*").eq("trip_id", trip_id).execute()
-    assembled: list[TripTier] = []
-    for tier in tiers_res.data or []:
+    tier_rows = (sb.table("trip_tiers").select("*").eq("trip_id", trip_id).execute()).data or []
+    tier_ids = [tier["id"] for tier in tier_rows]
+    days_by_tier: dict[str, list[dict]] = {}
+    if tier_ids:
         days_res = (
             sb.table("itinerary_days")
             .select("*")
-            .eq("trip_tier_id", tier["id"])
+            .in_("trip_tier_id", tier_ids)
             .order("day_number")
             .execute()
         )
+        for day in days_res.data or []:
+            days_by_tier.setdefault(day["trip_tier_id"], []).append(day)
+
+    assembled: list[TripTier] = []
+    for tier in tier_rows:
         assembled.append(
             TripTier(
                 tier=tier["tier"],
@@ -135,7 +141,7 @@ def get_trip_result(trip_id: str) -> dict | None:
                         afternoon=d["afternoon"],
                         evening=d["evening"],
                     )
-                    for d in days_res.data or []
+                    for d in days_by_tier.get(tier["id"], [])
                 ],
             )
         )
@@ -169,35 +175,66 @@ def save_trip(user_id: str, trip_id: str) -> None:
     ).execute()
 
 
-def list_saved_trips(user_id: str) -> list[dict]:
+def list_saved_trips(user_id: str, *, page: int = 1, page_size: int = 20) -> dict:
+    """Paginated, batch-fetched summary of a user's saved trips.
+
+    Avoids the N+1 pattern of calling get_trip_result() per row (which itself
+    issued several queries per trip) by fetching each related table once with
+    an `.in_()` filter across the whole page.
+    """
     sb = get_supabase()
-    rows = (
+    offset = (page - 1) * page_size
+    rows_res = (
         sb.table("saved_trips")
         .select("trip_id, saved_at")
         .eq("user_id", user_id)
         .order("saved_at", desc=True)
+        .range(offset, offset + page_size - 1)
         .execute()
     )
+    rows = rows_res.data or []
+    if not rows:
+        return {"items": [], "page": page, "pageSize": page_size, "hasMore": False}
+
+    trip_ids = [row["trip_id"] for row in rows]
+    trips_res = sb.table("trips").select("*").in_("id", trip_ids).execute()
+    trips_by_id = {trip["id"]: trip for trip in trips_res.data or []}
+
+    dest_slugs = list({trip["destination_slug"] for trip in trips_by_id.values()})
+    dest_by_slug: dict[str, dict] = {}
+    if dest_slugs:
+        dest_res = sb.table("destinations").select("slug, city, country").in_("slug", dest_slugs).execute()
+        dest_by_slug = {dest["slug"]: dest for dest in dest_res.data or []}
+
+    ready_trip_ids = [trip_id for trip_id, trip in trips_by_id.items() if trip["status"] == "ready"]
+    tiers_by_trip: dict[str, list[dict]] = {}
+    if ready_trip_ids:
+        tiers_res = sb.table("trip_tiers").select("*").in_("trip_id", ready_trip_ids).execute()
+        for tier in tiers_res.data or []:
+            tiers_by_trip.setdefault(tier["trip_id"], []).append(tier)
+
     out: list[dict] = []
-    for row in rows.data or []:
-        found = get_trip_result(row["trip_id"])
-        if not found or found.get("status") != "ready":
+    for row in rows:
+        trip = trips_by_id.get(row["trip_id"])
+        if not trip or trip["status"] != "ready":
             continue
-        result = found["result"]
-        tier = next((item for item in result.tiers if item.tier == "comfort"), None)
-        if tier is None and result.tiers:
-            tier = result.tiers[0]
+        tiers = tiers_by_trip.get(trip["id"], [])
+        tier = next((item for item in tiers if item["tier"] == "comfort"), None)
+        if tier is None and tiers:
+            tier = tiers[0]
         if tier is None:
             continue
+        dest = dest_by_slug.get(trip["destination_slug"])
+        destination_label = f"{dest['city']}, {dest['country']}" if dest else trip["destination_slug"]
         out.append(
             {
-                "tripId": result.trip_id,
-                "tier": tier.tier,
-                "destination": result.input.destination,
-                "label": result.label,
-                "startDate": result.input.start_date,
-                "endDate": result.input.end_date,
+                "tripId": trip["id"],
+                "tier": tier["tier"],
+                "destination": destination_label,
+                "label": trip.get("label"),
+                "startDate": str(trip["start_date"]),
+                "endDate": str(trip["end_date"]),
                 "savedAt": row.get("saved_at"),
             }
         )
-    return out
+    return {"items": out, "page": page, "pageSize": page_size, "hasMore": len(rows) == page_size}

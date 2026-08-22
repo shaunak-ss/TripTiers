@@ -22,8 +22,8 @@ export function InvitePage() {
   const [savedTrips, setSavedTrips] = useState<SavedTrip[]>([]);
 
   useEffect(() => {
-    void fetchMyRooms().then(setRooms);
-    void fetchMySavedTrips().then(setSavedTrips);
+    void fetchMyRooms().then((result) => setRooms(result.items));
+    void fetchMySavedTrips().then((result) => setSavedTrips(result.items));
   }, [setRooms]);
 
   if (!user) return null;

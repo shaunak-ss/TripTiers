@@ -15,16 +15,46 @@ import { useAuthStore } from "@/store/authStore";
 import { useCollabStore } from "@/store/collabStore";
 import type { SavedTrip } from "@/store/tripStore";
 
+const PAGE_SIZE = 20;
+
 export function DashboardTripsPage() {
   const user = useAuthStore((state) => state.user);
   const rooms = useCollabStore(useShallow((state) => (user ? state.roomsForUser(user.id) : [])));
   const setRooms = useCollabStore((state) => state.setRooms);
+  const [roomsPage, setRoomsPage] = useState(1);
+  const [roomsHasMore, setRoomsHasMore] = useState(false);
   const [savedTrips, setSavedTrips] = useState<SavedTrip[]>([]);
+  const [tripsPage, setTripsPage] = useState(1);
+  const [tripsHasMore, setTripsHasMore] = useState(false);
 
   useEffect(() => {
-    void fetchMyRooms().then(setRooms);
-    void fetchMySavedTrips().then(setSavedTrips);
+    void fetchMyRooms(1, PAGE_SIZE).then((result) => {
+      setRooms(result.items);
+      setRoomsPage(1);
+      setRoomsHasMore(result.hasMore);
+    });
+    void fetchMySavedTrips(1, PAGE_SIZE).then((result) => {
+      setSavedTrips(result.items);
+      setTripsPage(1);
+      setTripsHasMore(result.hasMore);
+    });
   }, [setRooms]);
+
+  const loadMoreRooms = async () => {
+    const nextPage = roomsPage + 1;
+    const result = await fetchMyRooms(nextPage, PAGE_SIZE);
+    setRooms([...rooms, ...result.items]);
+    setRoomsPage(nextPage);
+    setRoomsHasMore(result.hasMore);
+  };
+
+  const loadMoreTrips = async () => {
+    const nextPage = tripsPage + 1;
+    const result = await fetchMySavedTrips(nextPage, PAGE_SIZE);
+    setSavedTrips((prev) => [...prev, ...result.items]);
+    setTripsPage(nextPage);
+    setTripsHasMore(result.hasMore);
+  };
 
   return (
     <PageTransition>
@@ -57,6 +87,13 @@ export function DashboardTripsPage() {
                 </Link>
               ))}
             </div>
+            {roomsHasMore && (
+              <div className="mt-4 flex justify-center">
+                <Button variant="outline" size="sm" onClick={() => void loadMoreRooms()}>
+                  Load more rooms
+                </Button>
+              </div>
+            )}
           </section>
         )}
 
@@ -120,6 +157,13 @@ export function DashboardTripsPage() {
                 );
               })}
             </motion.div>
+          )}
+          {tripsHasMore && (
+            <div className="mt-4 flex justify-center">
+              <Button variant="outline" size="sm" onClick={() => void loadMoreTrips()}>
+                Load more trips
+              </Button>
+            </div>
           )}
         </section>
       </div>

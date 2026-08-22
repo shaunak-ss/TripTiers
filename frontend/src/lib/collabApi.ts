@@ -10,18 +10,33 @@ async function parseJson(res: Response) {
   return (await res.json()) as Record<string, unknown>;
 }
 
-export async function fetchMyRooms(): Promise<CollabRoom[]> {
-  if (!isLiveBackendEnabled()) return [];
-  const res = await fetch(`${API_BASE}/api/me/rooms`, { headers: await authHeaders(false) });
-  if (!res.ok) return [];
-  return (await res.json()) as CollabRoom[];
+export interface Page<T> {
+  items: T[];
+  page: number;
+  pageSize: number;
+  hasMore: boolean;
 }
 
-export async function fetchMySavedTrips(): Promise<SavedTrip[]> {
-  if (!isLiveBackendEnabled()) return [];
-  const res = await fetch(`${API_BASE}/api/me/trips`, { headers: await authHeaders(false) });
-  if (!res.ok) return [];
-  return (await res.json()) as SavedTrip[];
+function emptyPage<T>(page: number, pageSize: number): Page<T> {
+  return { items: [], page, pageSize, hasMore: false };
+}
+
+export async function fetchMyRooms(page = 1, pageSize = 20): Promise<Page<CollabRoom>> {
+  if (!isLiveBackendEnabled()) return emptyPage(page, pageSize);
+  const res = await fetch(`${API_BASE}/api/me/rooms?page=${page}&pageSize=${pageSize}`, {
+    headers: await authHeaders(false),
+  });
+  if (!res.ok) return emptyPage(page, pageSize);
+  return (await res.json()) as Page<CollabRoom>;
+}
+
+export async function fetchMySavedTrips(page = 1, pageSize = 20): Promise<Page<SavedTrip>> {
+  if (!isLiveBackendEnabled()) return emptyPage(page, pageSize);
+  const res = await fetch(`${API_BASE}/api/me/trips?page=${page}&pageSize=${pageSize}`, {
+    headers: await authHeaders(false),
+  });
+  if (!res.ok) return emptyPage(page, pageSize);
+  return (await res.json()) as Page<SavedTrip>;
 }
 
 export async function syncCreateRoom(input: { name: string; tripId?: string }): Promise<CollabRoom> {

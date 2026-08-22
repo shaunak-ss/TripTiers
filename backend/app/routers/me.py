@@ -1,4 +1,4 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, Query
 
 from app.auth.deps import CurrentUserDep, ensure_profile
 from app.db.repositories.collab_repository import list_rooms_for_user
@@ -41,10 +41,18 @@ async def update_me(body: ProfileUpdateBody, user: CurrentUserDep) -> dict:
 
 
 @router.get("/trips")
-async def my_trips(user: CurrentUserDep) -> list[dict]:
-    return list_saved_trips(user.id)
+async def my_trips(
+    user: CurrentUserDep,
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100, alias="pageSize"),
+) -> dict:
+    return list_saved_trips(user.id, page=page, page_size=page_size)
 
 
 @router.get("/rooms")
-async def my_rooms(user: CurrentUserDep) -> list[dict]:
-    return list_rooms_for_user(user.id)
+async def my_rooms(
+    user: CurrentUserDep,
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100, alias="pageSize"),
+) -> dict:
+    return list_rooms_for_user(user.id, page=page, page_size=page_size)

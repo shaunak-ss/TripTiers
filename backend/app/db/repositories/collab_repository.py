@@ -77,21 +77,46 @@ def assert_member(room: dict, user_id: str) -> None:
         raise PermissionError("not_a_member")
 
 
-def list_rooms_for_user(user_id: str) -> list[dict]:
+def list_rooms_for_user(user_id: str, *, page: int = 1, page_size: int = 20) -> dict:
+    """Paginated, batch-fetched list of rooms a user belongs to.
+
+    Replaces the previous per-membership loop (one collab_rooms query, plus a
+    members query and a messages query per room) with one `.in_()` query per
+    related table, no matter how many rooms the user is in.
+    """
     sb = get_supabase()
     memberships = sb.table("collab_members").select("room_id").eq("user_id", user_id).execute()
-    rooms: list[dict] = []
-    seen: set[str] = set()
-    for row in memberships.data or []:
-        room_id = row["room_id"]
-        if room_id in seen:
-            continue
-        seen.add(room_id)
-        found = sb.table("collab_rooms").select("*").eq("id", room_id).limit(1).execute()
-        if found.data:
-            rooms.append(_load(found.data[0]))
+    room_ids = list(dict.fromkeys(row["room_id"] for row in memberships.data or []))
+    if not room_ids:
+        return {"items": [], "page": page, "pageSize": page_size, "hasMore": False}
+
+    room_rows = (sb.table("collab_rooms").select("*").in_("id", room_ids).execute()).data or []
+    all_members = (sb.table("collab_members").select("*").in_("room_id", room_ids).execute()).data or []
+    all_messages = (
+        sb.table("collab_messages").select("*").in_("room_id", room_ids).order("created_at").execute()
+    ).data or []
+
+    members_by_room: dict[str, list[dict]] = {}
+    for member in all_members:
+        members_by_room.setdefault(member["room_id"], []).append(member)
+    messages_by_room: dict[str, list[dict]] = {}
+    for message in all_messages:
+        messages_by_room.setdefault(message["room_id"], []).append(message)
+
+    rooms = [
+        _assemble(room, members_by_room.get(room["id"], []), messages_by_room.get(room["id"], []))
+        for room in room_rows
+    ]
     rooms.sort(key=lambda item: item["createdAt"], reverse=True)
-    return rooms
+
+    start = (page - 1) * page_size
+    end = start + page_size
+    return {
+        "items": rooms[start:end],
+        "page": page,
+        "pageSize": page_size,
+        "hasMore": end < len(rooms),
+    }
 
 
 def create_room(

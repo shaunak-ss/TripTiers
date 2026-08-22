@@ -83,6 +83,8 @@ create table if not exists saved_trips (
 create index if not exists idx_flight_cache_key on flight_search_cache (cache_key);
 create index if not exists idx_itinerary_cache_key on itinerary_skeleton_cache (cache_key);
 create index if not exists idx_trips_destination on trips (destination_slug);
+create index if not exists idx_trip_tiers_trip_id on trip_tiers (trip_id);
+create index if not exists idx_itinerary_days_trip_tier_id on itinerary_days (trip_tier_id);
 
 create table if not exists collab_rooms (
   id uuid primary key default gen_random_uuid(),
