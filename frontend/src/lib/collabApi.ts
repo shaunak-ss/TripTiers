@@ -10,18 +10,47 @@ async function parseJson(res: Response) {
   return (await res.json()) as Record<string, unknown>;
 }
 
-export async function fetchMyRooms(): Promise<CollabRoom[]> {
-  if (!isLiveBackendEnabled()) return [];
-  const res = await fetch(`${API_BASE}/api/me/rooms`, { headers: await authHeaders(false) });
-  if (!res.ok) return [];
-  return (await res.json()) as CollabRoom[];
+export interface Page<T> {
+  items: T[];
+  page: number;
+  pageSize: number;
+  hasMore: boolean;
 }
 
-export async function fetchMySavedTrips(): Promise<SavedTrip[]> {
-  if (!isLiveBackendEnabled()) return [];
-  const res = await fetch(`${API_BASE}/api/me/trips`, { headers: await authHeaders(false) });
-  if (!res.ok) return [];
-  return (await res.json()) as SavedTrip[];
+function emptyPage<T>(page: number, pageSize: number): Page<T> {
+  return { items: [], page, pageSize, hasMore: false };
+}
+
+/**
+ * Tolerates a bare array response (the shape this endpoint returned before
+ * pagination was added) alongside the current `{items, ...}` shape, so a
+ * cached old frontend bundle talking to a new backend — or vice versa during
+ * a rolling deploy — degrades to an unpaginated list instead of crashing.
+ */
+function toPage<T>(body: unknown, page: number, pageSize: number): Page<T> {
+  if (Array.isArray(body)) return { items: body as T[], page, pageSize, hasMore: false };
+  if (body && typeof body === "object" && Array.isArray((body as Page<T>).items)) {
+    return body as Page<T>;
+  }
+  return emptyPage(page, pageSize);
+}
+
+export async function fetchMyRooms(page = 1, pageSize = 20): Promise<Page<CollabRoom>> {
+  if (!isLiveBackendEnabled()) return emptyPage(page, pageSize);
+  const res = await fetch(`${API_BASE}/api/me/rooms?page=${page}&pageSize=${pageSize}`, {
+    headers: await authHeaders(false),
+  });
+  if (!res.ok) return emptyPage(page, pageSize);
+  return toPage<CollabRoom>(await res.json(), page, pageSize);
+}
+
+export async function fetchMySavedTrips(page = 1, pageSize = 20): Promise<Page<SavedTrip>> {
+  if (!isLiveBackendEnabled()) return emptyPage(page, pageSize);
+  const res = await fetch(`${API_BASE}/api/me/trips?page=${page}&pageSize=${pageSize}`, {
+    headers: await authHeaders(false),
+  });
+  if (!res.ok) return emptyPage(page, pageSize);
+  return toPage<SavedTrip>(await res.json(), page, pageSize);
 }
 
 export async function syncCreateRoom(input: { name: string; tripId?: string }): Promise<CollabRoom> {

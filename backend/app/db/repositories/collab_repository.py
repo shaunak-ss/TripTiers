@@ -77,21 +77,42 @@ def assert_member(room: dict, user_id: str) -> None:
         raise PermissionError("not_a_member")
 
 
-def list_rooms_for_user(user_id: str) -> list[dict]:
+def list_rooms_for_user(user_id: str, *, page: int = 1, page_size: int = 20) -> dict:
+    """Paginated list of rooms a user belongs to.
+
+    Uses PostgREST resource embedding (Supabase's join) to fetch memberships,
+    each room, and that room's member list in a single request instead of one
+    query per related table. Messages aren't embedded here — the room-list
+    view only ever renders name/code/member count, never message content, so
+    fetching a room's full chat history for every row in this list would be
+    pure waste; `get_room_by_code` still loads messages for the room-detail view.
+    """
     sb = get_supabase()
-    memberships = sb.table("collab_members").select("room_id").eq("user_id", user_id).execute()
-    rooms: list[dict] = []
-    seen: set[str] = set()
+    memberships = (
+        sb.table("collab_members")
+        .select("room_id, collab_rooms(*, collab_members(*))")
+        .eq("user_id", user_id)
+        .execute()
+    )
+    rooms_by_id: dict[str, dict] = {}
     for row in memberships.data or []:
-        room_id = row["room_id"]
-        if room_id in seen:
-            continue
-        seen.add(room_id)
-        found = sb.table("collab_rooms").select("*").eq("id", room_id).limit(1).execute()
-        if found.data:
-            rooms.append(_load(found.data[0]))
+        room = row.get("collab_rooms")
+        if room and room["id"] not in rooms_by_id:
+            rooms_by_id[room["id"]] = room
+    if not rooms_by_id:
+        return {"items": [], "page": page, "pageSize": page_size, "hasMore": False}
+
+    rooms = [_assemble(room, room.get("collab_members") or [], []) for room in rooms_by_id.values()]
     rooms.sort(key=lambda item: item["createdAt"], reverse=True)
-    return rooms
+
+    start = (page - 1) * page_size
+    end = start + page_size
+    return {
+        "items": rooms[start:end],
+        "page": page,
+        "pageSize": page_size,
+        "hasMore": end < len(rooms),
+    }
 
 
 def create_room(

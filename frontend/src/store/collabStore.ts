@@ -94,13 +94,21 @@ export const useCollabStore = create<CollabState>()(
           return { rooms: [room, ...others] };
         });
       },
-      setRooms: (rooms) => set({ rooms }),
+      setRooms: (rooms) => set({ rooms: Array.isArray(rooms) ? rooms : [] }),
       roomsForUser: (userId) => get().rooms.filter((room) => room.members.some((member) => member.userId === userId)),
       roomByCode: (code) => get().rooms.find((room) => room.code.toUpperCase() === code.toUpperCase()),
     }),
     {
       name: "triptiers.collab",
       partialize: (state) => ({ rooms: state.rooms }),
+      // A bad deploy (or version-skewed frontend/backend during a rollout) could
+      // have persisted something other than an array under "rooms" before this
+      // guard existed. Sanitize on rehydration so an already-corrupted
+      // localStorage entry self-heals instead of crashing the app forever.
+      merge: (persisted, current) => {
+        const rooms = (persisted as Partial<CollabState> | undefined)?.rooms;
+        return { ...current, rooms: Array.isArray(rooms) ? rooms : current.rooms };
+      },
     }
   )
 );
