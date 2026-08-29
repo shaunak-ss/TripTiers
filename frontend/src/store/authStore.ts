@@ -29,11 +29,14 @@ function fallbackUser(user: User): AuthUser {
   return { id: user.id, name, email: user.email ?? "", avatarHue };
 }
 
+const PROFILE_FETCH_TIMEOUT_MS = 4000;
+
 async function profileFromApi(token: string, fallback: AuthUser): Promise<AuthUser> {
   if (!API_BASE) return fallback;
   try {
     const res = await fetch(`${API_BASE}/api/me`, {
       headers: { Authorization: `Bearer ${token}` },
+      signal: AbortSignal.timeout(PROFILE_FETCH_TIMEOUT_MS),
     });
     if (!res.ok) return fallback;
     const body = (await res.json()) as AuthUser;
@@ -48,6 +51,23 @@ async function profileFromApi(token: string, fallback: AuthUser): Promise<AuthUs
   }
 }
 
+function applySession(token: string | undefined, user: User | undefined) {
+  if (!token || !user) {
+    useAuthStore.setState({ user: null, accessToken: null });
+    return;
+  }
+  const fallback = fallbackUser(user);
+  // Show the Dashboard immediately from the JWT. /api/me can wait — on a
+  // sleeping Render instance that call alone is often 10–50s and used to
+  // block the whole nav swap from "Log in" → "Dashboard".
+  useAuthStore.setState({ user: fallback, accessToken: token });
+  void profileFromApi(token, fallback).then((mapped) => {
+    const current = useAuthStore.getState();
+    if (current.accessToken !== token) return;
+    useAuthStore.setState({ user: mapped, accessToken: token });
+  });
+}
+
 export const useAuthStore = create<AuthState>((set, get) => ({
   user: null,
   accessToken: null,
@@ -58,20 +78,11 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       return;
     }
 
-    const applySession = async (token: string | undefined, user: User | undefined) => {
-      if (!token || !user) {
-        set({ user: null, accessToken: null });
-        return;
-      }
-      const mapped = await profileFromApi(token, fallbackUser(user));
-      set({ user: mapped, accessToken: token });
-    };
-
     const { data } = await supabase.auth.getSession();
-    await applySession(data.session?.access_token, data.session?.user);
+    applySession(data.session?.access_token, data.session?.user);
 
     supabase.auth.onAuthStateChange((_event, session) => {
-      void applySession(session?.access_token, session?.user);
+      applySession(session?.access_token, session?.user);
     });
 
     set({ initialized: true });
@@ -88,12 +99,14 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     });
     if (error) throw new Error(error.message);
     if (!data.session) return "confirm_email";
+    applySession(data.session.access_token, data.session.user);
     return "session";
   },
   login: async ({ email, password }) => {
     if (!isSupabaseConfigured()) throw new Error("Supabase is not configured on the frontend.");
-    const { error } = await supabase.auth.signInWithPassword({ email: email.trim(), password });
+    const { data, error } = await supabase.auth.signInWithPassword({ email: email.trim(), password });
     if (error) throw new Error(error.message);
+    applySession(data.session?.access_token, data.session?.user);
   },
   loginWithGoogle: async () => {
     if (!isSupabaseConfigured()) throw new Error("Supabase is not configured on the frontend.");
